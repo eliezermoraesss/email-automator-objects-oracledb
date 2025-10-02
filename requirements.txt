@@ -1,0 +1,6 @@
+pip~=25.2
+cryptography~=46.0.2
+pandas~=2.3.3
+oracledb~=3.3.0
+Flask~=3.1.2
+python-dotenv~=1.1.1
