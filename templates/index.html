@@ -1,0 +1,224 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Editor de Procedures Oracle - Eliezer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; }
+      .container { max-width: 1100px; margin: auto; }
+      .row { display:flex; gap:16px; margin-bottom:12px; }
+      .col { flex:1; }
+      textarea { width:100%; height:420px; font-family: monospace; font-size:13px; padding:8px; }
+      select, input[type=file], button { padding:8px; font-size:14px; }
+      label { font-weight:600; }
+      .small { font-size:13px; color:#555; }
+      .list-box { max-height: 300px; overflow:auto; border:1px solid #ddd; padding:8px; }
+      .top-actions { display:flex; gap:12px; align-items:center; }
+      .danger { background:#ffdddd; border:1px solid #ff9999; padding:8px; }
+      .success { background:#ddffdd; border:1px solid #99ff99; padding:8px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Editor de Procedures / Functions (Oracle)</h1>
+      <p class="small">Fluxo: faça upload do Excel (coluna <b>NAME</b>) → selecione o objeto → revise o código transformado → salve no banco. Use em homologação primeiro.</p>
+
+      <div class="row">
+        <div class="col">
+          <label>Upload do arquivo Excel (.xlsx)</label><br/>
+          <input type="file" id="excelFile" accept=".xlsx" />
+          <div style="margin-top:8px;">
+            <button id="btnUpload">Enviar e Processar Excel</button>
+            <span id="uploadResult" class="small"></span>
+          </div>
+        </div>
+        <div class="col">
+          <label>Objetos encontrados (coluna NAME)</label>
+          <div class="list-box" id="namesBox">
+            Nenhum arquivo carregado.
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div style="flex:0 0 320px;">
+          <label>Selecionar objeto</label><br/>
+          <select id="selectObject" style="width:100%; padding:8px;">
+            <option value="">-- selecione --</option>
+          </select>
+          <div style="margin-top:8px;">
+            <button id="btnFetch">Buscar e Transformar</button>
+            <button id="btnDownloadOld">Baixar backup (antigo)</button>
+          </div>
+        </div>
+
+        <div class="col">
+          <label>Nome do objeto:</label>
+          <div id="objectName" style="font-weight:600; margin-bottom:6px;"></div>
+          <label>Código original</label>
+          <textarea id="originalText" readonly></textarea>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <label>Código transformado (edite se necessário)</label>
+          <textarea id="transformedText"></textarea>
+          <div style="margin-top:8px;">
+            <button id="btnSave">Salvar Alterações no Banco</button>
+            <span id="saveResult" class="small"></span>
+          </div>
+        </div>
+      </div>
+
+      <hr/>
+      <div class="small">
+        <strong>Notas:</strong>
+        <ul>
+          <li>As transformações aplicadas são automáticas; revise o resultado antes de salvar.</li>
+          <li>Se o texto no textarea já contém <code>CREATE OR REPLACE</code>, será executado diretamente.</li>
+          <li>Antes de confirmar o save, baixe o backup (botão "Baixar backup (antigo)").</li>
+        </ul>
+      </div>
+    </div>
+
+    <script>
+      const btnUpload = document.getElementById("btnUpload");
+      const excelFile = document.getElementById("excelFile");
+      const namesBox = document.getElementById("namesBox");
+      const selectObject = document.getElementById("selectObject");
+      const btnFetch = document.getElementById("btnFetch");
+      const originalText = document.getElementById("originalText");
+      const transformedText = document.getElementById("transformedText");
+      const objectName = document.getElementById("objectName");
+      const btnSave = document.getElementById("btnSave");
+      const uploadResult = document.getElementById("uploadResult");
+      const saveResult = document.getElementById("saveResult");
+      const btnDownloadOld = document.getElementById("btnDownloadOld");
+
+      btnUpload.addEventListener("click", async () => {
+        uploadResult.textContent = "";
+        if (!excelFile.files || excelFile.files.length === 0) {
+          uploadResult.textContent = "Selecione um arquivo .xlsx primeiro.";
+          return;
+        }
+        const f = excelFile.files[0];
+        const form = new FormData();
+        form.append("file", f);
+        uploadResult.textContent = "Enviando...";
+        try {
+          const resp = await fetch("/upload_excel", {
+            method: "POST",
+            body: form
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            uploadResult.textContent = "Erro: " + (data.error || JSON.stringify(data));
+            return;
+          }
+          const names = data.names || [];
+          uploadResult.textContent = names.length + " nomes carregados.";
+          // Preenche lista e select
+          namesBox.innerHTML = "";
+          selectObject.innerHTML = "<option value=''>-- selecione --</option>";
+          names.forEach(n => {
+            const d = document.createElement("div");
+            d.textContent = n;
+            namesBox.appendChild(d);
+            const opt = document.createElement("option");
+            opt.value = n;
+            opt.textContent = n;
+            selectObject.appendChild(opt);
+          });
+        } catch (err) {
+          uploadResult.textContent = "Erro ao enviar: " + err.toString();
+        }
+      });
+
+      btnFetch.addEventListener("click", async () => {
+        const name = selectObject.value;
+        objectName.textContent = "";
+        originalText.value = "";
+        transformedText.value = "";
+        saveResult.textContent = "";
+        if (!name) {
+          alert("Selecione um objeto.");
+          return;
+        }
+        objectName.textContent = name;
+        try {
+          const resp = await fetch("/fetch_procedure", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name })
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            alert("Erro: " + (data.error || JSON.stringify(data)));
+            return;
+          }
+          originalText.value = data.original || "";
+          transformedText.value = data.transformed || "";
+        } catch (err) {
+          alert("Erro ao buscar: " + err.toString());
+        }
+      });
+
+      btnDownloadOld.addEventListener("click", async () => {
+        const name = selectObject.value;
+        if (!name) { alert("Selecione um objeto."); return; }
+        try {
+          const resp = await fetch("/download_backup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name })
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            alert("Erro: " + (err.error || JSON.stringify(err)));
+            return;
+          }
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = name + ".sql";
+          a.click();
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          alert("Erro no download: " + err.toString());
+        }
+      });
+
+      btnSave.addEventListener("click", async () => {
+        const name = selectObject.value;
+        if (!name) { alert("Selecione um objeto."); return; }
+        const newText = transformedText.value || "";
+        if (!newText || newText.trim().length === 0) {
+          alert("Textarea vazio.");
+          return;
+        }
+        // Opcional: confirmar
+        if (!confirm("Confirma salvar as alterações no banco para " + name + " ?")) return;
+        saveResult.textContent = "Enviando alteração...";
+        try {
+          const resp = await fetch("/save_procedure", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, new_text: newText })
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            saveResult.textContent = "Erro: " + (data.error || JSON.stringify(data));
+            return;
+          }
+          saveResult.textContent = "Ok: " + (data.message || "Atualizado");
+        } catch (err) {
+          saveResult.textContent = "Erro ao salvar: " + err.toString();
+        }
+      });
+    </script>
+  </body>
+</html>
